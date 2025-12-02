@@ -1,11 +1,13 @@
 package br.unipar.projetointegrador.frotisapi.controller;
 
-import br.unipar.projetointegrador.frotisapi.dto.AlunoUpdateDTO; // Reaproveitando DTO compatível
+import br.unipar.projetointegrador.frotisapi.dto.AlunoUpdateDTO;
+import br.unipar.projetointegrador.frotisapi.dto.InstrutorStatsDTO; // Importe o DTO
 import br.unipar.projetointegrador.frotisapi.model.Endereco;
 import br.unipar.projetointegrador.frotisapi.model.Instrutor;
 import br.unipar.projetointegrador.frotisapi.model.Usuario;
 import br.unipar.projetointegrador.frotisapi.repository.EnderecoRepository;
 import br.unipar.projetointegrador.frotisapi.repository.UsuarioRepository;
+import br.unipar.projetointegrador.frotisapi.service.AlunoService; // <--- IMPORT NOVO
 import br.unipar.projetointegrador.frotisapi.service.InstrutorService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -19,16 +21,19 @@ import java.util.List;
 public class InstrutorController {
 
     private final InstrutorService instrutorService;
-    private final UsuarioRepository usuarioRepository;   // <--- Faltava declarar isso
-    private final EnderecoRepository enderecoRepository; // <--- Faltava declarar isso
+    private final UsuarioRepository usuarioRepository;
+    private final EnderecoRepository enderecoRepository;
+    private final AlunoService alunoService; // <--- DECLARAÇÃO NOVA
 
     @Autowired
     public InstrutorController(InstrutorService instrutorService,
                                UsuarioRepository usuarioRepository,
-                               EnderecoRepository enderecoRepository) {
+                               EnderecoRepository enderecoRepository,
+                               AlunoService alunoService) { // <--- INJEÇÃO NO CONSTRUTOR
         this.instrutorService = instrutorService;
-        this.usuarioRepository = usuarioRepository;     // <--- Injeção aqui
-        this.enderecoRepository = enderecoRepository;   // <--- Injeção aqui
+        this.usuarioRepository = usuarioRepository;
+        this.enderecoRepository = enderecoRepository;
+        this.alunoService = alunoService; // <--- ATRIBUIÇÃO
     }
 
     @GetMapping("/listar")
@@ -37,8 +42,23 @@ public class InstrutorController {
     }
 
     @PostMapping("/salvar")
-    public ResponseEntity<Instrutor> salvar(@RequestBody Instrutor instrutor) {
-        return ResponseEntity.ok(instrutorService.salvar(instrutor));
+    public ResponseEntity<?> salvar(@RequestBody Instrutor instrutor) {
+        try {
+            return ResponseEntity.ok(instrutorService.salvar(instrutor));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PutMapping("/atualizar/{id}")
+    public ResponseEntity<?> atualizar(@PathVariable Long id, @RequestBody Instrutor instrutor) {
+        try {
+            Instrutor atualizado = instrutorService.atualizar(id, instrutor);
+            if (atualizado != null) return ResponseEntity.ok(atualizado);
+            return ResponseEntity.notFound().build();
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 
     @GetMapping("/buscar/{id}")
@@ -52,13 +72,12 @@ public class InstrutorController {
         return ResponseEntity.noContent().build();
     }
 
-    // --- Endpoint de Atualização do Perfil (Instrutor) ---
+
+    // --- Endpoint de Atualização do Perfil (Instrutor Logado) ---
     @PutMapping("/me")
     public ResponseEntity<Instrutor> atualizarMe(@RequestBody AlunoUpdateDTO dto) {
         try {
-            // 1. Identifica usuário logado
             String login = SecurityContextHolder.getContext().getAuthentication().getName();
-
             Usuario usuario = usuarioRepository.findByLoginOrEmail(login)
                     .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
 
@@ -68,12 +87,10 @@ public class InstrutorController {
                 return ResponseEntity.notFound().build();
             }
 
-            // 2. Atualiza Dados Básicos
             if (dto.getNome() != null) instrutor.setNome(dto.getNome());
             if (dto.getEmail() != null) instrutor.setEmail(dto.getEmail());
             if (dto.getTelefone() != null) instrutor.setTelefone(dto.getTelefone());
 
-            // 3. Atualiza Endereço
             Endereco endereco = instrutor.getEndereco();
             if (endereco == null) {
                 endereco = new Endereco();
@@ -89,7 +106,6 @@ public class InstrutorController {
             enderecoRepository.save(endereco);
             instrutor.setEndereco(endereco);
 
-            // 4. Salva Instrutor
             return ResponseEntity.ok(instrutorService.salvar(instrutor));
 
         } catch (Exception e) {
@@ -98,14 +114,23 @@ public class InstrutorController {
         }
     }
 
-    @PutMapping("/atualizar/{id}")
-    public ResponseEntity<Instrutor> atualizar(@PathVariable Long id, @RequestBody Instrutor instrutor) {
-        Instrutor instrutorAtualizado = instrutorService.atualizar(id, instrutor);
+    // --- Endpoint de Estatísticas do Instrutor ---
+    @GetMapping("/estatisticas/me")
+    public ResponseEntity<InstrutorStatsDTO> getMinhasEstatisticas() {
+        String login = SecurityContextHolder.getContext().getAuthentication().getName();
+        Usuario usuario = usuarioRepository.findByLoginOrEmail(login).orElse(null);
 
-        if (instrutorAtualizado != null) {
-            return ResponseEntity.ok(instrutorAtualizado);
-        } else {
-            return ResponseEntity.notFound().build();
+        if (usuario == null || usuario.getInstrutor() == null) {
+            return ResponseEntity.badRequest().build();
         }
+
+        Long instrutorId = usuario.getInstrutor().getId();
+
+        // Agora o alunoService existe e pode ser usado!
+        long totalAlunos = alunoService.listarPorInstrutor(instrutorId).size();
+
+        long fichasAtivas = 0; // Implementar contagem real se desejar
+
+        return ResponseEntity.ok(new InstrutorStatsDTO(totalAlunos, fichasAtivas));
     }
 }

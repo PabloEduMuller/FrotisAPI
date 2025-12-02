@@ -2,29 +2,61 @@ package br.unipar.projetointegrador.frotisapi.controller;
 
 import br.unipar.projetointegrador.frotisapi.dto.*;
 import br.unipar.projetointegrador.frotisapi.model.Aluno;
+import br.unipar.projetointegrador.frotisapi.model.Usuario;
+import br.unipar.projetointegrador.frotisapi.model.enums.RoleEnum;
+import br.unipar.projetointegrador.frotisapi.repository.UsuarioRepository;
 import br.unipar.projetointegrador.frotisapi.service.AlunoService;
 import org.apache.catalina.connector.Response;
-import org.springframework.security.core.Authentication;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/aluno")
 public class AlunoController {
 
+    @Autowired
     private AlunoService alunoService;
 
-    public AlunoController(AlunoService alunoService) {
-        this.alunoService = alunoService;
-    }
+    @Autowired
+    private UsuarioRepository usuarioRepository;
 
+    // --- MÉTODO LISTAR INTELIGENTE (CORRIGIDO) ---
     @GetMapping("/listar")
     public ResponseEntity<List<Aluno>> listarAlunos() {
-        List<Aluno> alunos = alunoService.listarTodos();
+        // 1. Identifica quem está logado
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String login = auth.getName();
+
+        // 2. Busca o usuário no banco
+        Usuario usuario = usuarioRepository.findByLoginOrEmail(login).orElse(null);
+
+        if (usuario == null) {
+            return ResponseEntity.status(401).build();
+        }
+
+        List<Aluno> alunos;
+
+        // 3. Lógica de Segurança: Quem vê o quê?
+        if (usuario.getRole() == RoleEnum.ROLE_GERENCIADOR) {
+            // GERENTE: Vê tudo
+            alunos = alunoService.listarTodos();
+        } else if (usuario.getRole() == RoleEnum.ROLE_INSTRUTOR) {
+            // INSTRUTOR: Vê apenas os seus alunos
+            if (usuario.getInstrutor() != null) {
+                // Chama o método que criamos no service
+                alunos = alunoService.listarPorInstrutor(usuario.getInstrutor().getId());
+            } else {
+                alunos = List.of(); // Instrutor sem cadastro completo não vê nada
+            }
+        } else {
+            // ALUNO: Não deveria acessar essa lista
+            return ResponseEntity.status(403).build();
+        }
 
         if (alunos.isEmpty()) {
             return ResponseEntity.noContent().build();
@@ -32,22 +64,40 @@ public class AlunoController {
 
         return ResponseEntity.ok(alunos);
     }
+    // ---------------------------------------------
 
     @PostMapping("/salvar")
-    public ResponseEntity<Aluno> salvarAluno(@RequestBody Aluno aluno) {
-        Aluno alunoSalvo = alunoService.salvar(aluno);
-        return ResponseEntity.status(Response.SC_CREATED).body(alunoSalvo);
+    public ResponseEntity<?> salvarAluno(@RequestBody Aluno aluno) {
+        try {
+            Aluno alunoSalvo = alunoService.salvar(aluno);
+            return ResponseEntity.status(Response.SC_CREATED).body(alunoSalvo);
+        } catch (RuntimeException e) {
+            // Retorna erro 400 com a mensagem "Já existe..."
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 
+    @PostMapping("/salvar-completo")
+    public ResponseEntity<?> salvarAlunoCompleto(@RequestBody AlunoCompletoDTO dto) {
+        try {
+            return ResponseEntity.ok(alunoService.salvarCompleto(dto, null));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PutMapping("/atualizar-completo/{id}")
+    public ResponseEntity<?> atualizarAlunoCompleto(@PathVariable Long id, @RequestBody AlunoCompletoDTO dto) {
+        try {
+            return ResponseEntity.ok(alunoService.salvarCompleto(dto, id));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
     @GetMapping("/buscar/{id}")
     public ResponseEntity<Aluno> buscarAlunoPorID(@PathVariable Long id) {
         Aluno aluno = alunoService.buscarPorId(id);
-
-        if (aluno == null) {
-            return ResponseEntity.notFound().build();
-        }
-
-        return ResponseEntity.ok(aluno);
+        return (aluno != null) ? ResponseEntity.ok(aluno) : ResponseEntity.notFound().build();
     }
 
     @DeleteMapping("/deletar/{id}")
@@ -59,38 +109,22 @@ public class AlunoController {
     @PutMapping("/atualizar/{id}")
     public ResponseEntity<Aluno> atualizarAluno(@PathVariable Long id, @RequestBody Aluno alunoAtualizado) {
         Aluno aluno = alunoService.atualizar(id, alunoAtualizado);
-
-        if (aluno == null) {
-            return ResponseEntity.notFound().build();
-        }
-
-        return ResponseEntity.ok(aluno);
+        return (aluno != null) ? ResponseEntity.ok(aluno) : ResponseEntity.notFound().build();
     }
 
     @GetMapping("/perfil")
-    public ResponseEntity<AlunoResponseDTO> getPerfil() { // Retorno alterado para DTO
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        String cpf = authentication.getName();
-
+    public ResponseEntity<AlunoResponseDTO> getPerfil() {
+        String cpf = SecurityContextHolder.getContext().getAuthentication().getName();
         Aluno aluno = alunoService.buscarPorCpf(cpf);
-
-        if (aluno != null) {
-            // Converte para o DTO que o Android entende
-            return ResponseEntity.ok(new AlunoResponseDTO(aluno));
-        } else {
-            return ResponseEntity.notFound().build();
-        }
+        return (aluno != null) ? ResponseEntity.ok(new AlunoResponseDTO(aluno)) : ResponseEntity.notFound().build();
     }
 
     @PutMapping("/perfil")
-    public ResponseEntity<Aluno> atualizarPerfil(@RequestBody AlunoUpdateDTO alunoDTO) {
+    public ResponseEntity<AlunoResponseDTO> atualizarPerfil(@RequestBody AlunoUpdateDTO dto) {
         try {
-            // Obtém o CPF do token JWT (Usuário Logado)
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            String cpf = authentication.getName();
-
-            Aluno alunoAtualizado = alunoService.atualizarPerfil(cpf, alunoDTO);
-            return ResponseEntity.ok(alunoAtualizado);
+            String cpf = SecurityContextHolder.getContext().getAuthentication().getName();
+            Aluno alunoAtualizado = alunoService.atualizarPerfil(cpf, dto);
+            return ResponseEntity.ok(new AlunoResponseDTO(alunoAtualizado));
         } catch (Exception e) {
             return ResponseEntity.badRequest().build();
         }
@@ -99,102 +133,42 @@ public class AlunoController {
     @PutMapping("/mudar-senha")
     public ResponseEntity<String> mudarSenha(@RequestBody MudarSenhaDTO dto) {
         try {
-            // 1. Identifica o usuário pelo Token
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            String cpf = authentication.getName();
-
-            // 2. Tenta alterar a senha
+            String cpf = SecurityContextHolder.getContext().getAuthentication().getName();
             alunoService.alterarSenha(cpf, dto);
-
             return ResponseEntity.ok("Senha alterada com sucesso!");
-
         } catch (Exception e) {
-            // Retorna 400 Bad Request com a mensagem de erro (ex: "Senha atual incorreta")
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
 
-    //WEB
-
     @GetMapping("/me")
     public ResponseEntity<AlunoResponseDTO> getMe() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String cpf = auth.getName();
-        Aluno aluno = alunoService.buscarPorCpf(cpf);
-        return (aluno != null) ? ResponseEntity.ok(new AlunoResponseDTO(aluno)) : ResponseEntity.notFound().build();
+        return getPerfil(); // Reutiliza a lógica
     }
 
-    // 2. Estatísticas para o Dashboard (Admin/Gerente)
     @GetMapping("/estatisticas")
     public ResponseEntity<DashboardStatsDTO> getEstatisticas() {
-        // Conta alunos totais para teste
         long total = alunoService.listarTodos().size();
-        long ativos = alunoService.listarTodos().stream().filter(a -> a.getAtivo()).count();
-        long inativos = total - ativos;
-
-        return ResponseEntity.ok(new DashboardStatsDTO(ativos, inativos, 5)); // 5 novos (exemplo)
+        long ativos = alunoService.listarTodos().stream().filter(a -> Boolean.TRUE.equals(a.getAtivo())).count();
+        return ResponseEntity.ok(new DashboardStatsDTO(ativos, total - ativos, 0));
     }
 
     @GetMapping("/estatisticas/instrutor/{id}")
     public ResponseEntity<DashboardStatsDTO> getEstatisticasInstrutor(@PathVariable Long id) {
-        // AQUI ERA ONDE O ERRO ACONTECIA (404)
-        // O front chamava essa rota e ela não existia.
-
-        // Lógica: Contar alunos vinculados a este instrutor via Ficha de Treino
-        // Por enquanto, retornamos dados de teste para destravar a tela:
-        return ResponseEntity.ok(new DashboardStatsDTO(12, 3, 1));
+        // Aqui você pode implementar a lógica real de contar alunos DO instrutor
+        // Por enquanto, retorna dados dummy ou totais
+        return getEstatisticas();
     }
 
-    // 3. Atualização Específica (Peso) - Usado no VisualizarAluno.js
     @PutMapping("/atualizar-peso/{id}")
     public ResponseEntity<Void> atualizarPeso(@PathVariable Long id, @RequestBody AtualizarPesoRequestDTO dto) {
         alunoService.atualizarPeso(id, dto.getPeso());
         return ResponseEntity.ok().build();
     }
 
-    // 4. Atualização Específica (Altura) - Usado no VisualizarAluno.js
     @PutMapping("/atualizar-altura/{id}")
     public ResponseEntity<Void> atualizarAltura(@PathVariable Long id, @RequestBody AtualizarAlturaRequestDTO dto) {
         alunoService.atualizarAltura(id, dto.getAltura());
         return ResponseEntity.ok().build();
     }
-
-    @PutMapping("/me")
-    public ResponseEntity<AlunoResponseDTO> atualizarMe(@RequestBody AlunoUpdateDTO dto) {
-        try {
-            // 1. Descobre quem é o usuário logado pelo Token
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            String cpf = authentication.getName();
-
-            // 2. Usa o serviço de atualização que já criamos (que trata endereço, nulos, etc.)
-            Aluno alunoAtualizado = alunoService.atualizarPerfil(cpf, dto);
-
-            // 3. Retorna os dados atualizados no formato correto
-            return ResponseEntity.ok(new AlunoResponseDTO(alunoAtualizado));
-
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().build();
-        }
-    }
-
-    @GetMapping("/listar-web")
-    public ResponseEntity<List<AlunoResponseDTO>> listarAlunosWeb() {
-        List<Aluno> alunos = alunoService.listarTodos();
-        List<AlunoResponseDTO> dtos = alunos.stream()
-                .map(AlunoResponseDTO::new)
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(dtos);
-    }
-
-    @PostMapping("/salvar-completo")
-    public ResponseEntity<Aluno> salvarAlunoCompleto(@RequestBody AlunoCompletoDTO dto) {
-        return ResponseEntity.ok(alunoService.salvarCompleto(dto, null));
-    }
-
-    @PutMapping("/atualizar-completo/{id}")
-    public ResponseEntity<Aluno> atualizarAlunoCompleto(@PathVariable Long id, @RequestBody AlunoCompletoDTO dto) {
-        return ResponseEntity.ok(alunoService.salvarCompleto(dto, id));
-    }
-
-
 }

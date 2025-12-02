@@ -3,19 +3,15 @@ package br.unipar.projetointegrador.frotisapi.service;
 import br.unipar.projetointegrador.frotisapi.dto.AlunoCompletoDTO;
 import br.unipar.projetointegrador.frotisapi.dto.AlunoUpdateDTO;
 import br.unipar.projetointegrador.frotisapi.dto.MudarSenhaDTO;
-import br.unipar.projetointegrador.frotisapi.model.Aluno;
-import br.unipar.projetointegrador.frotisapi.model.Endereco;
-import br.unipar.projetointegrador.frotisapi.model.Matricula;
-import br.unipar.projetointegrador.frotisapi.model.Plano;
-import br.unipar.projetointegrador.frotisapi.repository.AlunoRepository;
-import br.unipar.projetointegrador.frotisapi.repository.EnderecoRepository;
-import br.unipar.projetointegrador.frotisapi.repository.MatriculaRepository;
-import br.unipar.projetointegrador.frotisapi.repository.PlanoRepository;
+import br.unipar.projetointegrador.frotisapi.model.*;
+import br.unipar.projetointegrador.frotisapi.repository.*;
+import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder; // Adicionado import
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class AlunoService {
@@ -25,7 +21,8 @@ public class AlunoService {
     private final EnderecoRepository enderecoRepository;
     @Autowired private MatriculaRepository matriculaRepository; // Adicione isso lá em cima
     @Autowired private PlanoRepository planoRepository;
-
+    @Autowired private UsuarioRepository usuarioRepository;
+    @Autowired private br.unipar.projetointegrador.frotisapi.repository.InstrutorRepository instrutorRepository;
     @Autowired
     public AlunoService(AlunoRepository alunoRepository,
                         PasswordEncoder passwordEncoder,
@@ -39,19 +36,18 @@ public class AlunoService {
         this.planoRepository = planoRepository;
     }
 
-    // Método 'salvar' atualizado para codificar a senha
+
+    @Transactional
     public Aluno salvar(Aluno aluno) {
-        // Pega a senha em texto puro que veio da requisição
+        // CHAMA A VALIDAÇÃO ANTES DE TUDO
+        validarDuplicidade(aluno.getCpf(), aluno.getEmail(), aluno.getTelefone(), aluno.getId());
+
+        // ... (resto do código igual: hash senha, save, criarUsuario) ...
         String senhaPura = aluno.getSenha();
-
-        // Codifica a senha usando o BCryptPasswordEncoder
-        String senhaCodificada = passwordEncoder.encode(senhaPura);
-
-        // Define a senha já codificada de volta no objeto aluno antes de salvar
-        aluno.setSenha(senhaCodificada);
-
-        // Salva o aluno no banco de dados com a senha já no formato hash
-        return alunoRepository.save(aluno);
+        if (senhaPura != null) aluno.setSenha(passwordEncoder.encode(senhaPura));
+        Aluno salvo = alunoRepository.save(aluno);
+        criarUsuarioParaAluno(salvo, senhaPura);
+        return salvo;
     }
 
     public Aluno buscarPorId(Long id) {
@@ -155,7 +151,10 @@ public class AlunoService {
         alunoRepository.save(aluno);
     }
 
+    @Transactional
     public Aluno salvarCompleto(AlunoCompletoDTO dto, Long idExistente) {
+        // valida os dados de cpf | email e telefone
+        validarDuplicidade(dto.getCpf(), dto.getEmail(), dto.getTelefone(), idExistente);
         Aluno aluno;
 
         if (idExistente != null) {
@@ -192,8 +191,22 @@ public class AlunoService {
         enderecoRepository.save(endereco);
         aluno.setEndereco(endereco);
 
+        if (dto.getInstrutorId() != null) {
+            // Busca o instrutor pelo ID que veio do formulário
+            br.unipar.projetointegrador.frotisapi.model.Instrutor instrutorResponsavel =
+                    instrutorRepository.findById(dto.getInstrutorId()).orElse(null);
+
+            aluno.setInstrutor(instrutorResponsavel);
+        }
+
         // Salva o Aluno
         Aluno alunoSalvo = alunoRepository.save(aluno);
+
+        if (dto.getSenha() != null && !dto.getSenha().isEmpty()) {
+            criarUsuarioParaAluno(alunoSalvo, dto.getSenha());
+        } else if (idExistente == null) {
+
+        }
 
         // 3. MATRÍCULA (VINCULAR PLANO)
         if (dto.getPlanoId() != null) {
@@ -219,4 +232,68 @@ public class AlunoService {
 
         return alunoSalvo;
     }
+
+    private void validarDuplicidade(String cpf, String email, String telefone, Long idExistente) {
+        // Valida CPF
+        if (cpf != null) {
+            alunoRepository.findByCpf(cpf).ifPresent(a -> {
+                if (idExistente == null || !a.getId().equals(idExistente)) {
+                    throw new RuntimeException("Já existe um aluno cadastrado com este CPF: " + cpf);
+                }
+            });
+        }
+
+        // Valida Email
+        if (email != null) {
+            alunoRepository.findByEmail(email).ifPresent(a -> {
+                if (idExistente == null || !a.getId().equals(idExistente)) {
+                    throw new RuntimeException("Já existe um aluno cadastrado com este E-mail: " + email);
+                }
+            });
+        }
+
+        // Valida Telefone
+        if (telefone != null) {
+            alunoRepository.findByTelefone(telefone).ifPresent(a -> {
+                if (idExistente == null || !a.getId().equals(idExistente)) {
+                    throw new RuntimeException("Já existe um aluno com este Telefone: " + telefone);
+                }
+            });
+        }
+    }
+
+    private void criarUsuarioParaAluno(Aluno aluno, String senhaPura) {
+        if (senhaPura == null || senhaPura.isEmpty()) return;
+
+        //Usar EMAIL como login
+        String login = aluno.getEmail();
+
+
+        if (login == null || login.isEmpty()) {
+            login = aluno.getCpf(); // Tenta CPF se não tiver email
+        }
+
+        Optional<Usuario> usuarioOpt = usuarioRepository.findByLogin(login);
+        Usuario usuario = usuarioOpt.orElse(new Usuario());
+
+        usuario.setLogin(login); // Grava o EMAIL no banco
+
+        // Criptografia da senha
+        if (!senhaPura.startsWith("$2a$")) {
+            usuario.setSenha(passwordEncoder.encode(senhaPura));
+        } else {
+            usuario.setSenha(senhaPura);
+        }
+
+        usuario.setRole(br.unipar.projetointegrador.frotisapi.model.enums.RoleEnum.ROLE_ALUNO);
+        usuario.setAluno(aluno);
+
+        usuarioRepository.save(usuario);
+    }
+
+    public List<Aluno> listarPorInstrutor(Long instrutorId) {
+        return alunoRepository.findByInstrutorId(instrutorId);
+    }
+
+
 }

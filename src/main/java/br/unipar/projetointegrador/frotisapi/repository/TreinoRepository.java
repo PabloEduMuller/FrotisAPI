@@ -25,4 +25,11 @@ public interface TreinoRepository extends JpaRepository<Treino, Long> {
     @Query("SELECT t FROM Treino t LEFT JOIN FETCH t.exercicios WHERE t.fichaTreino IS NULL")
     List<Treino> findTreinosSemFicha();
 
+    @Query("SELECT t FROM Treino t " +
+            "LEFT JOIN FETCH t.exercicios " +
+            "WHERE UPPER(t.diaSemana) = UPPER(:diaSemana) " +
+            "AND t.fichaTreino.aluno.id = :alunoId " +
+            "AND t.fichaTreino.ativa = true")
+    List<Treino> findTreinoDeHojePorAluno(@Param("diaSemana") String diaSemana, @Param("alunoId") Long alunoId);
+
 }

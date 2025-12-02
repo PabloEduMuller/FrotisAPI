@@ -3,7 +3,10 @@ package br.unipar.projetointegrador.frotisapi.service;
 import br.unipar.projetointegrador.frotisapi.dto.TreinoDTO;
 import br.unipar.projetointegrador.frotisapi.model.Exercicio;
 import br.unipar.projetointegrador.frotisapi.model.Treino;
+import br.unipar.projetointegrador.frotisapi.repository.AlunoRepository;
 import br.unipar.projetointegrador.frotisapi.repository.TreinoRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.time.DayOfWeek;
@@ -15,6 +18,8 @@ import java.util.stream.Collectors;
 public class TreinoService {
 
     private final TreinoRepository treinoRepository;
+    @Autowired
+    private AlunoRepository alunoRepository;
 
     public TreinoService(TreinoRepository treinoRepository) {
         this.treinoRepository = treinoRepository;
@@ -62,19 +67,6 @@ public class TreinoService {
         return null;
     }
 
-    public TreinoDTO buscarTreinoDeHoje() {
-        LocalDate hoje = LocalDate.now();
-        DayOfWeek diaDaSemanaEnum = hoje.getDayOfWeek();
-        String diaDaSemanaStr = converterDiaDaSemana(diaDaSemanaEnum);
-
-        Treino treino = treinoRepository.findTreinoCompletoByDiaSemana(diaDaSemanaStr).orElse(null);
-
-        if (treino != null) {
-            return new TreinoDTO(treino);
-        }
-        return null;
-    }
-
     public List<TreinoDTO> buscarTreinosSemFicha() {
         return treinoRepository.findTreinosSemFicha().stream()
                 .map(TreinoDTO::new)
@@ -92,5 +84,25 @@ public class TreinoService {
             case SUNDAY: return "DOMINGO";  // Adicionado/Ajustado
             default: return "";
         }
+    }
+
+    public TreinoDTO buscarTreinoDeHoje() {
+        String cpf = SecurityContextHolder.getContext().getAuthentication().getName();
+        var aluno = alunoRepository.findByCpf(cpf).orElse(null);
+        if (aluno == null) return null;
+
+        LocalDate hoje = LocalDate.now();
+        DayOfWeek diaDaSemanaEnum = hoje.getDayOfWeek();
+        String diaDaSemanaStr = converterDiaDaSemana(diaDaSemanaEnum);
+
+        // CORREÇÃO: Recebe lista e pega o primeiro
+        List<Treino> treinos = treinoRepository.findTreinoDeHojePorAluno(diaDaSemanaStr, aluno.getId());
+
+        if (treinos != null && !treinos.isEmpty()) {
+            // Pega o primeiro treino encontrado (o mais relevante)
+            return new TreinoDTO(treinos.get(0));
+        }
+
+        return null;
     }
 }

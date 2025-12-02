@@ -24,9 +24,52 @@ public class FichaTreinoController {
         this.fichaTreinoRepository = fichaTreinoRepository;
     }
 
+    @Autowired
+    private br.unipar.projetointegrador.frotisapi.repository.UsuarioRepository usuarioRepository;
+
+
     @GetMapping("/listar")
     public ResponseEntity<List<FichaTreino>> listarTodas() {
-        return ResponseEntity.ok(fichaTreinoRepository.findAll());
+        // 1. Identifica o usuário logado
+        String login = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication().getName();
+
+        br.unipar.projetointegrador.frotisapi.model.Usuario usuario =
+                usuarioRepository.findByLoginOrEmail(login).orElse(null);
+
+        if (usuario == null) return ResponseEntity.status(401).build();
+
+        List<FichaTreino> fichas;
+
+        // 2. Filtra os dados conforme a Role
+        if (usuario.getRole() == br.unipar.projetointegrador.frotisapi.model.enums.RoleEnum.ROLE_GERENCIADOR) {
+            // GERENTE: Vê tudo
+            fichas = fichaTreinoService.findAll();
+
+        } else if (usuario.getRole() == br.unipar.projetointegrador.frotisapi.model.enums.RoleEnum.ROLE_INSTRUTOR) {
+            // INSTRUTOR: Vê apenas as fichas que ele criou/supervisiona
+            if (usuario.getInstrutor() != null) {
+                fichas = fichaTreinoService.buscarPorInstrutor(usuario.getInstrutor().getId());
+            } else {
+                fichas = java.util.Collections.emptyList();
+            }
+
+        } else if (usuario.getRole() == br.unipar.projetointegrador.frotisapi.model.enums.RoleEnum.ROLE_ALUNO) {
+            // ALUNO: Vê apenas as suas fichas
+            if (usuario.getAluno() != null) {
+                fichas = fichaTreinoService.buscarPorAluno(usuario.getAluno().getId());
+            } else {
+                fichas = java.util.Collections.emptyList();
+            }
+
+        } else {
+            return ResponseEntity.status(403).build();
+        }
+
+        //Retorna (204 se vazio, 200 se tiver dados)
+        if (fichas.isEmpty()) {
+            return ResponseEntity.noContent().build();
+        }
+        return ResponseEntity.ok(fichas);
     }
 
     // POST: Cria uma ficha COMPLETA (Ficha -> Treinos -> Exercícios) para um aluno

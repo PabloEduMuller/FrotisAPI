@@ -22,11 +22,20 @@ public class FichaTreinoService {
     @Autowired private InstrutorRepository instrutorRepository;
     @Autowired private ExercicioRepository exercicioRepository;
     @Autowired private TreinoRepository treinoRepository;
+    @Autowired private br.unipar.projetointegrador.frotisapi.repository.UsuarioRepository usuarioRepository; // Injete isso
 
-    public List<FichaTreino> findAll() { return fichaRepository.findAll(); }
-    public FichaTreino findById(Long id) { return fichaRepository.findById(id).orElse(null); }
-    public void deleteById(Long id) { fichaRepository.deleteById(id); }
-    public FichaTreino save(FichaTreino f) { return fichaRepository.save(f); }
+
+    public List<FichaTreino> findAll() {
+        return fichaRepository.findAll(); }
+
+    public FichaTreino findById(Long id) {
+        return fichaRepository.findById(id).orElse(null); }
+
+    public void deleteById(Long id) {
+        fichaRepository.deleteById(id); }
+
+    public FichaTreino save(FichaTreino f) {
+        return fichaRepository.save(f); }
 
     @Autowired
     private FichaTreinoRepository fichaTreinoRepository;
@@ -55,13 +64,24 @@ public class FichaTreinoService {
 
     @Transactional
     public FichaTreino salvarFichaCompleta(FichaCompletaRequestDTO dto) {
-        // 1. Criar a Ficha
+
+        if (dto.getAlunoId() != null) {
+            fichaRepository.desativarTodasDoAluno(dto.getAlunoId());
+        }
+
+        List<FichaTreino> fichasAntigas = fichaTreinoRepository.findByAlunoId(dto.getAlunoId());
+        for (FichaTreino f : fichasAntigas) {
+            // Se a ficha estiver ativa, desativa ela
+            if (Boolean.TRUE.equals(f.getAtiva())) {
+                f.setAtiva(false);
+                fichaTreinoRepository.save(f);
+            }
+        }
+
         FichaTreino ficha = new FichaTreino();
         ficha.setDescricao(dto.getDescricao());
 
 
-
-        // --- CORREÇÃO: Conversão de LocalDate (DTO) para Date (Entity) ---
         if (dto.getDataInicio() != null) {
             Date inicio = Date.from(dto.getDataInicio().atStartOfDay(ZoneId.systemDefault()).toInstant());
             ficha.setDataInicio(inicio);
@@ -71,11 +91,11 @@ public class FichaTreinoService {
             Date fim = Date.from(dto.getDataFim().atStartOfDay(ZoneId.systemDefault()).toInstant());
             ficha.setDataFim(fim);
         }
-        // -----------------------------------------------------------------
+
 
         ficha.setAtiva(true);
 
-        // 2. Vincular Aluno e Instrutor
+
         Aluno aluno = alunoRepository.findById(dto.getAlunoId())
                 .orElseThrow(() -> new RuntimeException("Aluno não encontrado"));
         Instrutor instrutor = instrutorRepository.findById(dto.getInstrutorId())
@@ -87,7 +107,7 @@ public class FichaTreinoService {
         // Salva a ficha primeiro para ter ID
         FichaTreino fichaSalva = fichaRepository.save(ficha);
 
-        // 3. Processar Dias de Treino
+        // Processar Dias de Treino
         if (dto.getDias() != null) {
             for (DiaTreinoRequestDTO diaDTO : dto.getDias()) {
                 Treino treino = new Treino();
@@ -98,7 +118,7 @@ public class FichaTreinoService {
                 // Lista de exercícios para este treino
                 List<Exercicio> exerciciosDoTreino = new ArrayList<>();
 
-                // 4. Processar Exercícios do Dia
+                // Processar Exercícios do Dia
                 if (diaDTO.getExercicios() != null) {
                     for (ItemTreinoRequestDTO itemDTO : diaDTO.getExercicios()) {
                         // Busca o exercício original no catálogo
@@ -127,6 +147,10 @@ public class FichaTreinoService {
 
     public List<FichaTreino> buscarPorAluno(Long alunoId) {
         return fichaTreinoRepository.findByAlunoId(alunoId);
+    }
+
+    public List<FichaTreino> buscarPorInstrutor(Long instrutorId) {
+        return fichaTreinoRepository.findByInstrutorId(instrutorId);
     }
 
 

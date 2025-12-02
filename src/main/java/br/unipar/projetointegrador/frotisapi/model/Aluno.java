@@ -69,6 +69,11 @@ public class Aluno implements UserDetails {
     @com.fasterxml.jackson.annotation.JsonManagedReference("aluno-matriculas") // Permite que a matrícula apareça no JSON do aluno
     private List<Matricula> matriculaList = new ArrayList<>();
 
+    @ManyToOne
+    @JoinColumn(name = "instrutor_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore // Evita loop infinito e dados desnecessários na listagem
+    private Instrutor instrutor;
+
     public List<Matricula> getMatriculaList() {
         return matriculaList;
     }

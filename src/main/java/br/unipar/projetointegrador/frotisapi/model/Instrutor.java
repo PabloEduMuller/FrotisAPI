@@ -29,6 +29,9 @@ public class Instrutor {
     private String sexo;
     private Boolean ativo = true; // Campo útil para soft-delete
 
+    @Transient
+    private String senha;
+
     @OneToOne(cascade = CascadeType.ALL)
     @JoinColumn(name = "endereco_id")
     private Endereco endereco;
